@@ -1,31 +1,38 @@
-
+# app/models/transformer.py
 import torch.nn as nn
-from utils.positional_encoding import PositionalEncoding
+# PositionalEncoding'i doğru yoldan import et (eğer utils app içindeyse)
+from app.utils.positional_encoding import PositionalEncoding
 
-
-# Transformer tabanlı müzik üretim modeli
 class TransformerModel(nn.Module):
-    def __init__(self, vocab_size=128, embedding_dim=128, num_heads=4, num_layers=2, dropout=0.1):
+    def __init__(self, vocab_size, embedding_dim, num_heads, num_layers, dropout):
         """
-        vocab_size: MIDI pitch dağarcığı boyutu.
-        embedding_dim: Gömme boyutu.
-        num_heads: Çoklu dikkat (multi-head attention) sayısı.
-        num_layers: Transformer encoder katman sayısı.
-        dropout: Dropout oranı.
+        Transformer Modeli
+
+        Args:
+            vocab_size (int): Kelime dağarcığı boyutu.
+            embedding_dim (int): Gömme boyutu.
+            num_heads (int): Çoklu dikkat (multi-head attention) sayısı.
+            num_layers (int): Transformer encoder katman sayısı.
+            dropout (float): Dropout oranı.
         """
         super(TransformerModel, self).__init__()
+        # Parametreleri doğrudan kullan
+        self.embedding_dim = embedding_dim # positional encoding için sakla
         self.embedding = nn.Embedding(vocab_size, embedding_dim)
         self.positional_encoding = PositionalEncoding(embedding_dim, dropout)
-        encoder_layer = nn.TransformerEncoderLayer(d_model=embedding_dim, nhead=num_heads)
+        # d_model embedding_dim ile aynı olmalı
+        encoder_layer = nn.TransformerEncoderLayer(d_model=embedding_dim, nhead=num_heads, dropout=dropout, batch_first=True) # batch_first=True ekle
         self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
         self.fc = nn.Linear(embedding_dim, vocab_size)
-        
+
     def forward(self, x):
         # x boyutu: (batch_size, seq_length)
-        embed = self.embedding(x)  # (batch_size, seq_length, embedding_dim)
-        embed = embed.transpose(0, 1)  # (seq_length, batch_size, embedding_dim)
-        embed = self.positional_encoding(embed)
-        transformer_output = self.transformer(embed)  # (seq_length, batch_size, embedding_dim)
-        transformer_output = transformer_output.transpose(0, 1)  # (batch_size, seq_length, embedding_dim)
-        output = self.fc(transformer_output)  # (batch_size, seq_length, vocab_size)
+        embed = self.embedding(x) * (self.embedding_dim ** 0.5) # Scaling
+        # embed: (batch_size, seq_length, embedding_dim)
+        pos_encoded = self.positional_encoding(embed)
+        # pos_encoded: (batch_size, seq_length, embedding_dim)
+        transformer_output = self.transformer(pos_encoded)
+        # transformer_output: (batch_size, seq_length, embedding_dim)
+        output = self.fc(transformer_output)
+        # output: (batch_size, seq_length, vocab_size)
         return output

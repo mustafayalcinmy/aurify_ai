@@ -8,6 +8,8 @@ import numpy as np
 import os
 from pydub import AudioSegment
 import random
+import math
+
 
 logger = logging.getLogger("MusicGen")
 
@@ -228,3 +230,134 @@ def visualize_midi_piano_roll(midi_path, output_png_path=None, instrument_index=
         if 'fig' in locals() and plt.fignum_exists(fig.number):
              plt.close(fig)
         return False
+    
+
+
+# logger ve pretty_midi importları zaten olmalı
+
+def midi_to_pianoroll_tensor(midi_path, fs=4, pitch_range=(24, 108), include_velocity=False):
+    """
+    MIDI dosyasını piyano rulosu tensörüne dönüştürür.
+
+    Args:
+        midi_path (str): MIDI dosyasının yolu.
+        fs (int): Saniyedeki zaman adımı sayısı (çözünürlük).
+        pitch_range (tuple): Kullanılacak MIDI nota aralığı (min_pitch, max_pitch).
+        include_velocity (bool): Tensörde velocity bilgisini (0-1) sakla (True)
+                                 veya sadece varlığı (0/1) sakla (False).
+
+    Returns:
+        np.ndarray: Piyano rulosu tensörü (Zaman Adımları, Nota Sayısı) veya None (hata durumunda).
+    """
+    try:
+        midi_data = pretty_midi.PrettyMIDI(midi_path)
+        end_time = midi_data.get_end_time()
+        num_time_steps = math.ceil(end_time * fs)
+        num_pitches = pitch_range[1] - pitch_range[0]
+
+        if num_pitches <= 0:
+             logger.error("Geçersiz pitch_range.")
+             return None
+
+        # Başlangıçta sıfırlarla dolu bir piyano rulosu matrisi oluştur
+        piano_roll = np.zeros((num_time_steps, num_pitches))
+
+        for instrument in midi_data.instruments:
+            if instrument.is_drum:
+                continue # Davulları atla
+            for note in instrument.notes:
+                # Nota pitch'i belirlenen aralıkta mı kontrol et
+                if pitch_range[0] <= note.pitch < pitch_range[1]:
+                    # Nota başlangıç ve bitiş zamanlarını zaman adımlarına dönüştür
+                    start_step = int(round(note.start * fs))
+                    end_step = int(round(note.end * fs))
+
+                    # Nota pitch'ini matris indeksine dönüştür
+                    pitch_index = note.pitch - pitch_range[0]
+
+                    # Zaman adımlarına notayı işle
+                    if start_step < num_time_steps:
+                        # Velocity veya sabit 1 değeri ata
+                        value = note.velocity / 127.0 if include_velocity else 1.0
+                        # Aynı anda başlayan notalar için max velocity'yi alabiliriz (opsiyonel)
+                        piano_roll[start_step:min(end_step, num_time_steps), pitch_index] = np.maximum(
+                            piano_roll[start_step:min(end_step, num_time_steps), pitch_index],
+                            value
+                        )
+
+        return piano_roll.astype(np.float32) # Float32'ye çevir
+
+    except Exception as e:
+        logger.error(f"MIDI'den piyano rulosuna dönüştürme hatası ({midi_path}): {e}", exc_info=True)
+        return None
+
+# --- Piyano Rulosu -> MIDI dönüşümü de gerekecek ---
+def pianoroll_tensor_to_midi(piano_roll, file_path='output_from_gan.mid', fs=4, pitch_range=(24, 108), velocity_threshold=0.1, note_duration_steps=1, instrument_program=0, bpm=120):
+    """
+    Piyano rulosu tensörünü MIDI dosyasına dönüştürür.
+
+    Args:
+        piano_roll (np.ndarray): Piyano rulosu (Zaman Adımları, Nota Sayısı).
+        file_path (str): Kaydedilecek MIDI dosyasının yolu.
+        fs (int): Saniyedeki zaman adımı sayısı (tensörle aynı olmalı).
+        pitch_range (tuple): Kullanılan MIDI nota aralığı (tensörle aynı olmalı).
+        velocity_threshold (float): Bir notanın aktif kabul edilmesi için minimum değer (0-1).
+        note_duration_steps (int): Minimum nota süresi (zaman adımı cinsinden).
+        instrument_program (int): Kullanılacak enstrüman program numarası.
+        bpm (int): Tempo.
+    """
+    try:
+        midi = pretty_midi.PrettyMIDI(initial_tempo=bpm)
+        instrument = pretty_midi.Instrument(program=instrument_program)
+        num_time_steps, num_pitches = piano_roll.shape
+        min_pitch = pitch_range[0]
+        seconds_per_step = 1.0 / fs
+
+        current_notes = {} # Aktif notaları takip etmek için: pitch -> (start_step, velocity)
+
+        for time_step in range(num_time_steps):
+            current_time = time_step * seconds_per_step
+            for pitch_index in range(num_pitches):
+                pitch = min_pitch + pitch_index
+                velocity_value = piano_roll[time_step, pitch_index]
+                is_active = velocity_value >= velocity_threshold
+
+                if pitch in current_notes: # Nota zaten aktif mi?
+                    if not is_active: # Nota bitti mi?
+                        start_step, start_velocity = current_notes.pop(pitch)
+                        duration_steps = time_step - start_step
+                        if duration_steps >= note_duration_steps:
+                            note = pretty_midi.Note(
+                                velocity=int(start_velocity * 127),
+                                pitch=pitch,
+                                start=start_step * seconds_per_step,
+                                end=time_step * seconds_per_step
+                            )
+                            instrument.notes.append(note)
+                    # else: Nota devam ediyor, bir şey yapma
+                else: # Nota aktif değil miydi?
+                     if is_active: # Yeni nota başladı mı?
+                         current_notes[pitch] = (time_step, velocity_value)
+
+        # Döngü bittikten sonra hala aktif olan notaları bitir
+        final_time = num_time_steps * seconds_per_step
+        for pitch, (start_step, start_velocity) in current_notes.items():
+             duration_steps = num_time_steps - start_step
+             if duration_steps >= note_duration_steps:
+                 note = pretty_midi.Note(
+                     velocity=int(start_velocity * 127),
+                     pitch=pitch,
+                     start=start_step * seconds_per_step,
+                     end=final_time
+                 )
+                 instrument.notes.append(note)
+
+
+        midi.instruments.append(instrument)
+        midi.write(file_path)
+        logger.info(f"Piyano rulosundan MIDI oluşturuldu: {file_path}")
+        return file_path
+
+    except Exception as e:
+         logger.error(f"Piyano rulosundan MIDI'ye dönüştürme hatası: {e}", exc_info=True)
+         return None

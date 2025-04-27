@@ -2,7 +2,7 @@ import torch.nn as nn
 import torch.optim as optim
 import os
 from tqdm import tqdm
-from utils.model import save_model
+from app.utils.model import save_sequence_model
 import logging
 
 
@@ -60,10 +60,10 @@ def train(model, dataloader, model_type, model_params, num_epochs=10, lr=0.001, 
             if (epoch + 1) % checkpoint_interval == 0:
                 # Checkpoint dosya adı oluştur
                 checkpoint_path = os.path.join(save_dir, f"{model_name}_epoch{epoch+1}.pt")
-                save_model(model, model_type, model_params, epoch+1, optimizer, avg_loss, checkpoint_path)
+                save_sequence_model(model, model_type, model_params, epoch+1, optimizer, avg_loss, checkpoint_path)
                 
     # Son modeli kaydet
     final_path = os.path.join(save_dir, f"{model_name}_final.pt")
-    save_model(model, model_type, model_params, num_epochs, optimizer, avg_loss, final_path)
+    save_sequence_model(model, model_type, model_params, num_epochs, optimizer, avg_loss, final_path)
     
     return final_path
