@@ -137,10 +137,8 @@ def main():
         data_dir = config.get('PATHS', 'data_dir')
         generation_output_dir = config.get('PATHS', 'generation_output_dir')
         soundfont_path = config.get('PATHS', 'soundfont_path')
-        sequence_save_dir = config.get('PATHS', 'sequence_save_dir')
-        gan_save_dir = config.get('PATHS', 'gan_save_dir')
-        sequence_model_load_path = config.get('PATHS', 'sequence_model_load_path', fallback=None)
-        gan_model_load_path = config.get('PATHS', 'gan_model_load_path', fallback=None)
+        models_save_dir = config.get('PATHS', 'models_save_dir')
+        model_load_path = config.get('PATHS', 'model_load_path', fallback=None)
 
 
         # Genel Eğitim Ayarları
@@ -174,8 +172,7 @@ def main():
 
     # Çıktı dizinlerini oluştur
     os.makedirs(generation_output_dir, exist_ok=True)
-    if run_mode == 'sequence': os.makedirs(sequence_save_dir, exist_ok=True)
-    if run_mode == 'gan': os.makedirs(gan_save_dir, exist_ok=True)
+    os.makedirs(models_save_dir, exist_ok=True)
 
     # --- EĞİTİM ---
     if args.train:
@@ -197,7 +194,7 @@ def main():
             final_model_path = train_sequence(
                 model, dataloader, sequence_model_type, model_params, # model_params'ı trainer'a veriyoruz
                 num_epochs=epochs, lr=lr, device=device,
-                save_dir=sequence_save_dir, checkpoint_interval=checkpoint_interval
+                save_dir=models_save_dir, checkpoint_interval=checkpoint_interval
             )
             logger.info(f"Sıralı model eğitimi tamamlandı. Son model: {final_model_path}")
 
@@ -222,7 +219,7 @@ def main():
                 num_epochs=epochs,
                 lr_g=GAN_TRAINING_PARAMS['lr_g'], lr_d=GAN_TRAINING_PARAMS['lr_d'],
                 beta1=GAN_TRAINING_PARAMS['beta1'], latent_dim=GAN_TRAINING_PARAMS['latent_dim'],
-                device=device, save_dir=gan_save_dir, checkpoint_interval=checkpoint_interval
+                device=device, save_dir=models_save_dir, checkpoint_interval=checkpoint_interval
             )
             logger.info(f"GAN eğitimi tamamlandı. Son model bilgisi: {final_model_path}")
 
@@ -237,11 +234,11 @@ def main():
             if not load_path: # Yol boşsa son eğitileni bul
                 # Model tipini config'den veya sabitlerden al
                 # seq_model_type_for_load = config.get('EXPERIMENT', 'sequence_model_type', fallback='transformer').lower()
-                # load_path = os.path.join(sequence_save_dir, f"{seq_model_type_for_load}_final.pt") # Dosya adını tahmin et
+                # load_path = os.path.join(models_save_dir, f"{seq_model_type_for_load}_final.pt") # Dosya adını tahmin et
                 # Daha güvenli yol: En son değiştirilen .pt dosyasını bulmak
-                list_of_files = glob.glob(os.path.join(sequence_save_dir, '*.pt'))
+                list_of_files = glob.glob(os.path.join(models_save_dir, '*.pt'))
                 if not list_of_files:
-                    logger.error(f"Sequence model yükleme yolu belirtilmemiş ve '{sequence_save_dir}' içinde model bulunamadı.")
+                    logger.error(f"Sequence model yükleme yolu belirtilmemiş ve '{models_save_dir}' içinde model bulunamadı.")
                     return
                 load_path = max(list_of_files, key=os.path.getctime)
                 logger.info(f"Sequence model yükleme yolu belirtilmedi, en son model kullanılıyor: {load_path}")
@@ -278,16 +275,16 @@ def main():
 
         elif run_mode == 'gan':
             # 1. Model Yükle (Sadece Generator)
-            load_path = gan_model_load_path
+            load_path = model_load_path
             # Önceki adımdaki NameError düzeltmesi için 'time' import edildiğini varsayıyoruz.
             # Eğer 'time' import edilmediyse, dosyanın başına 'import time' eklenmeli.
 
             # Model yükleme uyarısını düzeltmek için checkpoint dosyasını kullanmayı dene
             if not load_path:
                  # Son checkpoint'i bulmayı dene
-                list_of_files = glob.glob(os.path.join(gan_save_dir, 'gan_checkpoint_epoch_*.pt'))
+                list_of_files = glob.glob(os.path.join(models_save_dir, 'gan_checkpoint_epoch_*.pt'))
                 if not list_of_files:
-                    logger.error(f"GAN model yükleme yolu belirtilmemiş ve '{gan_save_dir}' içinde checkpoint bulunamadı.")
+                    logger.error(f"GAN model yükleme yolu belirtilmemiş ve '{models_save_dir}' içinde checkpoint bulunamadı.")
                     return
                 load_path = max(list_of_files, key=os.path.getctime)
                 logger.warning(f"GAN model yükleme yolu belirtilmedi, en son checkpoint kullanılıyor: {load_path}")

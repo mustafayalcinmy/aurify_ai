@@ -232,9 +232,6 @@ def visualize_midi_piano_roll(midi_path, output_png_path=None, instrument_index=
         return False
     
 
-
-# logger ve pretty_midi importları zaten olmalı
-
 def midi_to_pianoroll_tensor(midi_path, fs=4, pitch_range=(24, 108), include_velocity=False):
     """
     MIDI dosyasını piyano rulosu tensörüne dönüştürür.
