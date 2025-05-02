@@ -136,7 +136,6 @@ datasets/
 # Örnek: /path/to/my/datasets/maestro-v3.0.0/
 
 # Oluşturulan Model Dosyaları (config.ini'deki save_dir)
-*.pt
 
 # Üretilen Müzik/Görsel Dosyaları (config.ini'deki output_dir)
 generated/
