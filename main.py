@@ -230,7 +230,7 @@ def main():
 
         if run_mode == 'sequence':
             # 1. Model Yükle
-            load_path = sequence_model_load_path
+            load_path = model_load_path
             if not load_path: # Yol boşsa son eğitileni bul
                 # Model tipini config'den veya sabitlerden al
                 # seq_model_type_for_load = config.get('EXPERIMENT', 'sequence_model_type', fallback='transformer').lower()
