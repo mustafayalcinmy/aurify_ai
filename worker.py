@@ -1,6 +1,3 @@
-# File: OrpheusLabs/orpheuslabs_ai/worker.py
-# Rewritten worker supporting both Sequence and GAN models based on project structure
-
 import pika
 import json
 import uuid
@@ -11,6 +8,7 @@ import torch
 import glob
 import time
 from datetime import datetime
+from app.utils.image_generator import generate_and_save_image_from_file
 
 # Logging configuration (consistent with main.py)
 logging.basicConfig(
@@ -273,12 +271,13 @@ class MusicGenerationWorker:
         # Initialize response payload matching Go struct
         response_payload = {
             'task_id': task_id,
-            'status': 'processing', # Start with processing status
+            'status': 'processing',
             'message': 'Request received, starting processing.',
             'mp3_url': '',
-            'midi_url': '', # URL for the enhanced/final MIDI
-            'raw_midi_url': '', # URL for the initial raw MIDI output
+            'midi_url': '',
+            'raw_midi_url': '',
             'wav_url': '',
+            'image_url': '',
             'model_used': '',
             'length_generated': 0,
         }
@@ -443,36 +442,57 @@ class MusicGenerationWorker:
             # 3. Convert to MP3 (if WAV was created)
             mp3_path = None
             if wav_path and os.path.exists(wav_path):
-                 mp3_filename = os.path.splitext(wav_filename)[0] + ".mp3"
-                 mp3_full_path = os.path.join(task_output_dir, mp3_filename)
-                 logger.info(f"[TaskID: {task_id}] Converting to MP3: {wav_path} -> {mp3_full_path}")
-                 if convert_to_mp3(wav_path, mp3_full_path):
-                     logger.info(f"[TaskID: {task_id}] MP3 file saved: {mp3_full_path}")
-                     response_payload['mp3_url'] = f"/{relative_output_dir_url}/{mp3_filename}"
-                     mp3_path = mp3_full_path
-                 else:
-                     logger.error(f"[TaskID: {task_id}] WAV to MP3 conversion failed.")
-                 # Optionally remove the intermediate WAV file
-                 try:
-                     os.remove(wav_path)
-                     logger.debug(f"[TaskID: {task_id}] Intermediate WAV file removed: {wav_path}")
-                 except OSError as rm_err:
-                     logger.warning(f"[TaskID: {task_id}] Could not remove intermediate WAV file {wav_path}: {rm_err}")
+                mp3_filename = os.path.splitext(wav_filename)[0] + ".mp3"
+                mp3_full_path = os.path.join(task_output_dir, mp3_filename)
+                logger.info(f"[TaskID: {task_id}] Converting to MP3: {wav_path} -> {mp3_full_path}")
+                if convert_to_mp3(wav_path, mp3_full_path):
+                    logger.info(f"[TaskID: {task_id}] MP3 file saved: {mp3_full_path}")
+                    response_payload['mp3_url'] = f"/{relative_output_dir_url}/{mp3_filename}"
+                    mp3_path = mp3_full_path # Görsel oluşturma için MP3 yolunu sakla
+
+                    # --- GÖRSEL OLUŞTURMA (YENİ YÖNTEM) ---
+                    image_url = generate_and_save_image_from_file(
+                        input_filepath=mp3_full_path,
+                        output_dir=task_output_dir,
+                        base_filename=os.path.splitext(mp3_filename)[0], # MP3 adından uzantıyı çıkar
+                        relative_url_base=relative_output_dir_url,
+                        task_id=task_id,
+                        logger=logger # Worker'ın kendi logger'ını kullan
+                    )
+                    if image_url:
+                        response_payload['image_url'] = image_url
+                else:
+                    logger.error(f"[TaskID: {task_id}] WAV to MP3 conversion failed.")
+                    mp3_path = None # MP3 oluşturulamadığı için None yap
+
+                # Optionally remove the intermediate WAV file
+                try:
+                    if os.path.exists(wav_path): # Sadece dosya varsa silmeye çalış
+                        os.remove(wav_path)
+                        logger.debug(f"[TaskID: {task_id}] Intermediate WAV file removed: {wav_path}")
+                except OSError as rm_err:
+                    logger.warning(f"[TaskID: {task_id}] Could not remove intermediate WAV file {wav_path}: {rm_err}")
+
             elif self.soundfont_path: # SoundFont was configured, but WAV failed
-                 logger.warning(f"[TaskID: {task_id}] Skipping MP3 conversion because WAV file was not created.")
+                logger.warning(f"[TaskID: {task_id}] Skipping MP3 conversion because WAV file was not created.")
+                mp3_path = None # MP3 oluşmadığı için None yap
             else: # SoundFont wasn't configured
-                 logger.info(f"[TaskID: {task_id}] Skipping MP3 conversion as WAV was not generated.")
-
+                logger.info(f"[TaskID: {task_id}] Skipping MP3 conversion as WAV was not generated.")
+                mp3_path = None # MP3 oluşmadığı için None yap
             # --- Finalize Response ---
-            if response_payload['mp3_url'] or response_payload['midi_url']: # Success if at least MP3 or enhanced MIDI exists
-                 response_payload['status'] = 'completed'
-                 response_payload['message'] = 'Music generation and conversion successful.'
-                 total_duration = time.time() - start_time
-                 logger.info(f"[TaskID: {task_id}] Processing successful ({total_duration:.2f}s).")
-            else:
-                 # If we reached here but have no output URLs, something went wrong during conversion
-                 raise RuntimeError("Generation complete, but failed to produce MP3 or Enhanced MIDI output.")
+            if response_payload['mp3_url'] or response_payload['midi_url']:
+                response_payload['status'] = 'completed'
+                response_payload['message'] = 'Music generation and conversion successful.'
+                # mp3_path değişkenini kontrol ederek MP3'ün gerçekten oluşup oluşmadığına bakabiliriz
+                if mp3_path and not response_payload['image_url']: # MP3 var ama görsel yoksa
+                    response_payload['message'] += ' Image generation failed.'
+                elif not mp3_path: # MP3 hiç oluşmadıysa
+                    response_payload['message'] = response_payload['message'].replace('and conversion successful.', 'successful.') + ' MP3/Image generation skipped.'
 
+                total_duration = time.time() - start_time
+                logger.info(f"[TaskID: {task_id}] Processing successful ({total_duration:.2f}s).")
+            else:
+                raise RuntimeError("Generation complete, but failed to produce MP3 or Enhanced MIDI output.")
 
         except FileNotFoundError as e:
             logger.error(f"[TaskID: {task_id}] Processing Error - File Not Found: {e}", exc_info=True)
